@@ -34,6 +34,7 @@ import i3ipc
 import logging
 import signal
 import sys
+import re
 import fontawesome as fa
 
 from util import *
@@ -111,6 +112,7 @@ WINDOW_ICONS = {
     'yelp': fa.icons['code'],
     'zenity': fa.icons['window-maximize'],
     'zoom': fa.icons['comment'],
+    'virtualbox *': fa.icons['tv']
 }
 
 # This icon is used for any application not in the list above
@@ -132,9 +134,12 @@ def icon_for_window(window):
     classes = xprop(window.window, 'WM_CLASS')
     if classes != None and len(classes) > 0:
         for cls in classes:
-            cls = cls.lower()  # case-insensitive matching
-            if cls in WINDOW_ICONS:
-                return WINDOW_ICONS[cls]
+            cls = cls.lower() #case insensitive matching
+            for key in WINDOW_ICONS:
+              if re.match(key, cls):
+                # print(f"Got window class {cls} matching {key};")
+                return WINDOW_ICONS[key];
+
     logging.info(
         'No icon available for window with classes: %s' % str(classes))
     return DEFAULT_ICON
