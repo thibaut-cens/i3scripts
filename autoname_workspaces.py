@@ -30,12 +30,15 @@
 #   bindsym $mod+1 workspace number 1
 
 import argparse
-import i3ipc
+import json
 import logging
+import re
 import signal
 import sys
-import re
+import os
+
 import fontawesome as fa
+import i3ipc
 
 from util import *
 
@@ -49,71 +52,6 @@ from util import *
 # If you're not sure what the WM_CLASS is for your application, you can use
 # xprop (https://linux.die.net/man/1/xprop). Run `xprop | grep WM_CLASS`
 # then click on the application you want to inspect.
-WINDOW_ICONS = {
-    'alacritty': fa.icons['terminal'],
-    'atom': fa.icons['code'],
-    'banshee': fa.icons['play'],
-    'blender': fa.icons['cube'],
-    'chromium': fa.icons['chrome'],
-    'cura': fa.icons['cube'],
-    'darktable': fa.icons['image'],
-    'discord': fa.icons['comment'],
-    'eclipse': fa.icons['code'],
-    'emacs': fa.icons['code'],
-    'eog': fa.icons['image'],
-    'evince': fa.icons['file-pdf'],
-    'evolution': fa.icons['envelope'],
-    'feh': fa.icons['image'],
-    'file-roller': fa.icons['compress'],
-    'filezilla': fa.icons['server'],
-    'firefox': fa.icons['firefox'],
-    'firefox-esr': fa.icons['firefox'],
-    'gimp': fa.icons['image'],
-    'gimp-2.8': fa.icons['image'],
-    'gnome-control-center': fa.icons['toggle-on'],
-    'gnome-terminal-server': fa.icons['terminal'],
-    'google-chrome': fa.icons['chrome'],
-    'gpick': fa.icons['eye-dropper'],
-    'imv': fa.icons['image'],
-    'insomnia': fa.icons['globe'],
-    'java': fa.icons['code'],
-    'jetbrains-idea': fa.icons['code'],
-    'jetbrains-studio': fa.icons['code'],
-    'keepassxc': fa.icons['key'],
-    'keybase': fa.icons['key'],
-    'kicad': fa.icons['microchip'],
-    'kitty': fa.icons['terminal'],
-    'libreoffice': fa.icons['file-alt'],
-    'lua5.1': fa.icons['moon'],
-    'mpv': fa.icons['tv'],
-    'mupdf': fa.icons['file-pdf'],
-    'mysql-workbench-bin': fa.icons['database'],
-    'nautilus': fa.icons['copy'],
-    'nemo': fa.icons['copy'],
-    'openscad': fa.icons['cube'],
-    'pavucontrol': fa.icons['volume-up'],
-    'postman': fa.icons['space-shuttle'],
-    'rhythmbox': fa.icons['play'],
-    'robo3t': fa.icons['database'],
-    'signal': fa.icons['comment'],
-    'slack': fa.icons['slack'],
-    'slic3r.pl': fa.icons['cube'],
-    'spotify': fa.icons['music'],  # could also use the 'spotify' icon
-    'steam': fa.icons['steam'],
-    'subl': fa.icons['file-alt'],
-    'subl3': fa.icons['file-alt'],
-    'sublime_text': fa.icons['file-alt'],
-    'thunar': fa.icons['copy'],
-    'thunderbird': fa.icons['envelope'],
-    'totem': fa.icons['play'],
-    'urxvt': fa.icons['terminal'],
-    'xfce4-terminal': fa.icons['terminal'],
-    'xournal': fa.icons['file-alt'],
-    'yelp': fa.icons['code'],
-    'zenity': fa.icons['window-maximize'],
-    'zoom': fa.icons['comment'],
-    'virtualbox *': fa.icons['tv']
-}
 
 # This icon is used for any application not in the list above
 DEFAULT_ICON = '*'
@@ -124,31 +62,31 @@ DEFAULT_ICON = '*'
 RENUMBER_WORKSPACES = True
 
 
-def ensure_window_icons_lowercase():
-    global WINDOW_ICONS
-    WINDOW_ICONS = {name.lower(): icon for name, icon in WINDOW_ICONS.items()}
+def construct_icon_dict(icons_dict) :
+
+    return {name.lower(): fa.icons[icon.lower()] for name, icon in icons_dict.items()}
 
 
-def icon_for_window(window):
+def icon_for_window(window, icons_dict : dict):
     # Try all window classes and use the first one we have an icon for
     classes = xprop(window.window, 'WM_CLASS')
-    if classes != None and len(classes) > 0:
+    if classes is not None and len(classes) > 0:
         for cls in classes:
             cls = cls.lower() #case insensitive matching
-            for key in WINDOW_ICONS:
+            for key in icons_dict:
               if re.match(key, cls):
                 # print(f"Got window class {cls} matching {key};")
-                return WINDOW_ICONS[key];
+                return icons_dict[key]
 
     logging.info(
-        'No icon available for window with classes: %s' % str(classes))
+        f"No icon available for window with classes: ({classes})")
     return DEFAULT_ICON
 
 
 # renames all workspaces based on the windows present
 # also renumbers them in ascending order, with one gap left between monitors
 # for example: workspace numbering on two monitors: [1, 2, 3], [5, 6]
-def rename_workspaces(i3, icon_list_format='default'):
+def rename_workspaces(i3, icons_dict, icon_list_format='default'):
     ws_infos = i3.get_workspaces()
     prev_output = None
     n = 1
@@ -156,12 +94,12 @@ def rename_workspaces(i3, icon_list_format='default'):
         ws_info = ws_infos[ws_index]
 
         name_parts = parse_workspace_name(workspace.name)
-        icon_list = [icon_for_window(w) for w in workspace.leaves()]
+        icon_list = [icon_for_window(w, icons_dict) for w in workspace.leaves()]
         new_icons = format_icon_list(icon_list, icon_list_format)
 
         # As we enumerate, leave one gap in workspace numbers between each monitor.
         # This leaves a space to insert a new one later.
-        if ws_info.output != prev_output and prev_output != None:
+        if ws_info.output != prev_output and prev_output is not None:
             n += 1
         prev_output = ws_info.output
 
@@ -216,13 +154,20 @@ if __name__ == '__main__':
         "    - mathematician: factorize with superscripts (e.g. aababa -> a⁴b²),"
         "    - chemist: factorize with subscripts (e.g. aababa -> a₄b₂)."
     )
+    parser.add_argument(
+        'config',
+        type=argparse.FileType('r'),
+        default= os.path.join(os.path.dirname(__file__), 'autoname_workspaces.json'),
+        nargs='?',
+        help="The json representing the windows icons rules")
     args = parser.parse_args()
 
     RENUMBER_WORKSPACES = not args.norenumber_workspaces
+    ICONS_DICT = json.load(args.config)
 
     logging.basicConfig(level=logging.INFO)
 
-    ensure_window_icons_lowercase()
+    WINDOWS_ICONS = construct_icon_dict(ICONS_DICT)
 
     i3 = i3ipc.Connection()
 
@@ -230,7 +175,7 @@ if __name__ == '__main__':
     for sig in [signal.SIGINT, signal.SIGTERM]:
         signal.signal(sig, lambda signal, frame: on_exit(i3))
 
-    rename_workspaces(i3, icon_list_format=args.icon_list_format)
+    rename_workspaces(i3, icons_dict=WINDOWS_ICONS, icon_list_format=args.icon_list_format)
 
     # Call rename_workspaces() for relevant window events
     def event_handler(i3, e):
